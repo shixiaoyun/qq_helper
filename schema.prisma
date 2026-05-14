@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              Int      @id @default(autoincrement())
+  username        String   @unique
+  email           String?  @unique
+  phone           String?  @unique
+  passwordHash    String   @map("password_hash")
+  nickname        String?
+  avatar          String?
+  role            String   @default("user")
+  status          Int      @default(1)
+  emailVerified   Int      @default(0) @map("email_verified")
+  phoneVerified   Int      @default(0) @map("phone_verified")
+  lastLoginAt     DateTime? @map("last_login_at")
+  lastLoginIp     String?   @map("last_login_ip")
+  storageLimitMb  Int      @default(1024) @map("storage_limit_mb")
+  dailyChatLimit  Int      @default(99) @map("daily_chat_limit")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  conversations   Conversation[]
+  messages        Message[]
+  tokenUsages     TokenUsage[]
+  dailyChatLimits DailyChatLimit[]
+  userSettings    UserSettings?
+  knowledgeBases  KnowledgeBase[]
+  workflowRuns    WorkflowRun[]
+  agentRuns       AgentRun[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  label       String
+  permissions String   @default("[]")
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("roles")
+}
+
+model UserSettings {
+  id              Int      @id @default(autoincrement())
+  userId          Int      @unique @map("user_id")
+  defaultProviderId Int?   @map("default_provider_id")
+  temperature     Float    @default(0.7)
+  maxTokens       Int      @default(2048) @map("max_tokens")
+  theme           String   @default("system")
+  language        String   @default("zh-CN")
+  enableWebSearch Int      @default(1) @map("enable_web_search")
+  enableTools     Int      @default(1) @map("enable_tools")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model AIProvider {
+  id          Int      @id @default(autoincrement())
+  name        String
+  provider    String
+  baseUrl     String   @map("base_url")
+  apiKey      String   @map("api_key")
+  model       String
+  models      String   @default("[]")
+  isActive    Int      @default(1) @map("is_active")
+  isDefault   Int      @default(0) @map("is_default")
+  temperature Float    @default(0.7)
+  maxTokens   Int      @default(2048) @map("max_tokens")
+  timeout     Int      @default(30000)
+  wakeWord    String   @default("小牛") @map("wake_word")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  conversations Conversation[]
+
+  @@map("ai_providers")
+}
+
+model Conversation {
+  id                Int      @id @default(autoincrement())
+  userId            Int      @map("user_id")
+  title             String?
+  providerId        Int?     @map("provider_id")
+  model             String?
+  systemPrompt      String?  @map("system_prompt")
+  temperature       Float?
+  maxTokens         Int?     @map("max_tokens")
+  status            Int      @default(1)
+  messageCount      Int      @default(0) @map("message_count")
+  totalTokens       Int      @default(0) @map("total_tokens")
+  totalInputTokens  Int      @default(0) @map("total_input_tokens")
+  totalOutputTokens Int      @default(0) @map("total_output_tokens")
+  lastMessageAt     DateTime? @map("last_message_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider AIProvider? @relation(fields: [providerId], references: [id])
+  messages Message[]
+  tokenUsages TokenUsage[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id          Int      @id @default(autoincrement())
+  conversationId Int   @map("conversation_id")
+  userId      Int      @map("user_id")
+  role        String
+  content     String
+  toolCalls   String?  @map("tool_calls")
+  toolResults String?  @map("tool_results")
+  tokensInput Int      @default(0) @map("tokens_input")
+  tokensOutput Int     @default(0) @map("tokens_output")
+  provider    String?
+  model       String?
+  latencyMs   Int?     @map("latency_ms")
+  status      String   @default("ok")
+  errorMessage String? @map("error_message")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model TokenUsage {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  conversationId Int    @map("conversation_id")
+  messageId    Int      @map("message_id")
+  provider     String
+  model        String
+  tokensInput  Int      @map("tokens_input")
+  tokensOutput Int      @map("tokens_output")
+  totalTokens  Int      @map("total_tokens")
+  costEstimate Float?   @map("cost_estimate")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("token_usage")
+}
+
+model DailyChatLimit {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  chatDate  String   @map("chat_date")
+  chatCount Int      @default(0) @map("chat_count")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chatDate])
+  @@map("daily_chat_limits")
+}
+
+model SystemConfig {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("system_config")
+}
+
+model CrawlTask {
+  id        Int      @id @default(autoincrement())
+  taskId    String   @unique @map("task_id")
+  url       String
+  status    String   @default("pending")
+  keyword   String?
+  platform  String?
+  pages     Int      @default(2)
+  results   String   @default("[]")
+  error     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("crawl_tasks")
+}
+
+// RAG Knowledge Base Models
+model KnowledgeBase {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  name        String
+  description String?
+  status      String   @default("active")
+  documentCount Int    @default(0) @map("document_count")
+  chunkCount  Int      @default(0) @map("chunk_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents  Document[]
+  chunks     DocumentChunk[]
+
+  @@map("knowledge_bases")
+}
+
+model Document {
+  id            Int      @id @default(autoincrement())
+  knowledgeBaseId Int    @map("knowledge_base_id")
+  userId        Int      @map("user_id")
+  fileName      String   @map("file_name")
+  originalName  String   @map("original_name")
+  fileType      String   @map("file_type")
+  fileSize      Int      @map("file_size")
+  filePath      String   @map("file_path")
+  content       String?
+  status        String   @default("processing")
+  chunkCount    Int      @default(0) @map("chunk_count")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  chunks        DocumentChunk[]
+
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id            Int      @id @default(autoincrement())
+  documentId    Int      @map("document_id")
+  knowledgeBaseId Int    @map("knowledge_base_id")
+  content       String
+  embedding     String?  // JSON array of floats
+  chunkIndex    Int      @map("chunk_index")
+  metadata      String?  @default("{}") // JSON
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  document      Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  knowledgeBase KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+
+  @@map("document_chunks")
+}
+
+model VectorIndex {
+  id            Int      @id @default(autoincrement())
+  knowledgeBaseId Int    @map("knowledge_base_id")
+  chunkId       Int      @map("chunk_id")
+  embedding     Bytes    // Binary vector storage
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("vector_indices")
+}
+
+// Workflow Engine Models
+model Workflow {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  name        String
+  description String?
+  nodes       String   @default("[]") // JSON array of workflow nodes
+  edges       String   @default("[]") // JSON array of connections
+  status      String   @default("draft")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  runs WorkflowRun[]
+
+  @@map("workflows")
+}
+
+model WorkflowRun {
+  id          Int      @id @default(autoincrement())
+  workflowId  Int      @map("workflow_id")
+  userId      Int      @map("user_id")
+  inputs      String   @default("{}") // JSON
+  outputs     String?  // JSON
+  status      String   @default("pending")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  error       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_runs")
+}
+
+// Agent System Models
+model Agent {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  name        String
+  role        String
+  goal        String
+  backstory   String?
+  tools       String   @default("[]") // JSON array of tool names
+  model       String   @default("gpt-4")
+  temperature Float    @default(0.7)
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  crewMembers CrewMember[]
+
+  @@map("agents")
+}
+
+model Crew {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @map("user_id")
+  name        String
+  description String?
+  process     String   @default("sequential") // sequential, hierarchical
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  members     CrewMember[]
+  runs        AgentRun[]
+
+  @@map("crews")
+}
+
+model CrewMember {
+  id     Int @id @default(autoincrement())
+  crewId Int @map("crew_id")
+  agentId Int @map("agent_id")
+  order  Int @default(0)
+
+  crew  Crew  @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([crewId, agentId])
+  @@map("crew_members")
+}
+
+model AgentRun {
+  id          Int      @id @default(autoincrement())
+  crewId      Int      @map("crew_id")
+  userId      Int      @map("user_id")
+  task        String
+  result      String?
+  status      String   @default("pending")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  error       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  crew Crew @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("agent_runs")
+}
+
+// Audit Log Model
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  action    String
+  resource  String
+  details   String?  // JSON
+  ip        String?
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+// Sensitive Word Model
+model SensitiveWord {
+  id        Int      @id @default(autoincrement())
+  word      String   @unique
+  category  String   @default("general")
+  level     Int      @default(1) // 1=low, 2=medium, 3=high
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("sensitive_words")
+}
+
+// MCP Config Model
+model MCPConfig {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  type        String   @default("builtin") // builtin, custom, remote
+  config      String   @default("{}") // JSON
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("mcp_configs")
+}

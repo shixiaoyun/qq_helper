@@ -1,0 +1,26 @@
+{
+  "name": "niuma-ai-platform",
+  "version": "1.0.0",
+  "description": "牛马AI助手平台 - 多用户AI对话系统",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "cd server && npm run build",
+    "build:web": "cd web && npm run build",
+    "start": "cd server && npm start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "eslint": "^9",
+    "typescript": "^5"
+  }
+}
