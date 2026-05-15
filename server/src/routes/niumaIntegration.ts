@@ -12,6 +12,7 @@ import {
   checkNiumaEngineHealth,
   setConnectionConfig,
   getConnectionConfig,
+  flattenNiumaResult,
   type NiumaAdvancedFilterParams,
 } from '../services/niumaEngineClient.js';
 import {
@@ -968,7 +969,10 @@ router.post('/niuma/analysis/batch', authMiddleware, async (req, res) => {
           });
           const data = await response.json();
           if (data.data) {
-            return { _name: name, _found: true, _companyName: data.data.company_name, data: data.data };
+            // niuma_v10 把字段包成 { value, source }，前端会把对象当 React 子节点渲染崩页。
+            // 这里拍扁后再回给前端。
+            const flat = flattenNiumaResult(data.data);
+            return { _name: name, _found: true, _companyName: flat.company_name, data: flat };
           } else {
             return { _name: name, _found: false, _error: data.error || '未找到该企业' };
           }

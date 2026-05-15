@@ -5,7 +5,7 @@
 import { getDatabase } from '../config/database.js';
 import { encrypt } from '../services/dataEncryption.js';
 
-const DASHSCOPE_API_KEY = 'sk-6806e6d35170498ab7ca357cd14d2d43';
+const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY || '';
 
 function updateDashscopeKey() {
   try {

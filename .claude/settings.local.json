@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls d:/code/v10/niuma_v10/src/app/ 2>&1 | head -50)",
+      "Read(//d/code/v10/niuma_v10/src/app/**)"
+    ]
+  }
+}

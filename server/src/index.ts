@@ -140,7 +140,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', roleRoutes);
 app.use('/api/admin', aiProviderRoutes);
-app.use('/api', aiProviderRoutes);
+// 已移除重复的非受保护路由 - aiProviderRoutes 只在 /api/admin 下暴露
 app.use('/api', browserRoutes);
 app.use('/api', crawlerRoutes);
 app.use('/api', uploadRoutes);

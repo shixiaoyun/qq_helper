@@ -16,6 +16,12 @@ const envSchema = z.object({
   REDIS_URL: z.string().default('redis://localhost:6379'),
   UPLOAD_DIR: z.string().default('./uploads'),
   MAX_FILE_SIZE: z.string().default('10485760'),
+  // AI 提供商 API 密钥（需在 .env 文件中配置）
+  DASHSCOPE_API_KEY: z.string().optional(),
+  DEEPSEEK_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  // 数据加密密钥（32字符，建议使用强随机密钥）
+  ENCRYPTION_KEY: z.string().optional(),
 });
 
 export const env = envSchema.parse(process.env);

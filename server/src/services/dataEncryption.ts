@@ -4,14 +4,9 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const TAG_LENGTH = 16;
 
-const FALLBACK_KEYS = [
-  'oq-assistant-q1-28-encryption-key-32ch',
-  'oq-assistant-q1-27-encryption-key-32ch',
-  'oq-assistant-q1-26-encryption-key-32ch',
-  'oq-assistant-q1-25-encryption-key-32ch',
-  'oq-assistant-q1-24-encryption-key-32ch',
-  'niuma-ai-platform-default-encryption-key-32!',
-];
+// 降级密钥已移除 - 所有加密数据必须使用当前 ENCRYPTION_KEY
+// 升级旧数据请参考变更日志
+const FALLBACK_KEYS: string[] = [];
 
 export function getCurrentKeyFingerprint(): string {
   const keyStr = process.env.ENCRYPTION_KEY || '';

@@ -77,8 +77,49 @@ const DEFAULT_CONFIG: NiumaConnectionConfig = {
 
 let connectionConfig: NiumaConnectionConfig = { ...DEFAULT_CONFIG };
 
+function normalizeBaseUrl(rawUrl: string) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    throw new Error('牛马AI引擎地址未配置');
+  }
+
+  let url = rawUrl.trim();
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('牛马AI引擎地址必须以 http:// 或 https:// 开头');
+  }
+
+  url = url.replace(/\/api\/?$/i, '');
+  url = url.replace(/\/+$/g, '');
+  return url;
+}
+
+/**
+ * 把 niuma_v10 /api/analysis/single 返回里 { value, source } 形式的字段拍扁成 value
+ * 仅用于批量分析场景：前端按扁平字段渲染，对象会触发 React 渲染错误把整页卸载
+ */
+export function flattenNiumaResult(raw: any): Record<string, any> {
+  if (!raw || typeof raw !== 'object') return raw;
+  const out: Record<string, any> = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (val && typeof val === 'object' && !Array.isArray(val) && 'value' in (val as any)) {
+      out[key] = (val as any).value;
+    } else {
+      out[key] = val;
+    }
+  }
+  // 前端批量结果列期望 v9_quality_score，但 niuma_v10 实际字段是 percentile_score / v9_score
+  if (out.v9_quality_score === undefined) {
+    if (out.percentile_score !== undefined) out.v9_quality_score = out.percentile_score;
+    else if (out.v9_score !== undefined) out.v9_quality_score = out.v9_score;
+  }
+  return out;
+}
+
 export function setConnectionConfig(config: Partial<NiumaConnectionConfig>) {
-  connectionConfig = { ...connectionConfig, ...config };
+  const normalized: Partial<NiumaConnectionConfig> = { ...config };
+  if (normalized.baseUrl !== undefined) {
+    normalized.baseUrl = normalizeBaseUrl(String(normalized.baseUrl));
+  }
+  connectionConfig = { ...connectionConfig, ...normalized };
 }
 
 export function getConnectionConfig(): NiumaConnectionConfig {
@@ -87,6 +128,7 @@ export function getConnectionConfig(): NiumaConnectionConfig {
 
 /**
  * 调用牛马AI引擎高级筛选API
+ * 如果外部引擎不可用，自动回退到本地Mock服务
  */
 export async function fetchAdvancedAnalysis(
   params: NiumaAdvancedFilterParams = {}
@@ -102,13 +144,15 @@ export async function fetchAdvancedAnalysis(
     }
   });
 
-  const url = `${connectionConfig.baseUrl}/api/analysis/advanced?${queryParams.toString()}`;
+  const baseUrl = normalizeBaseUrl(connectionConfig.baseUrl);
+  const externalUrl = `${baseUrl}/api/analysis/advanced?${queryParams.toString()}`;
+  const localMockUrl = `http://localhost:${process.env.PORT || 1031}/api/analysis/advanced?${queryParams.toString()}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), connectionConfig.timeout);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetch(externalUrl, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
@@ -127,10 +171,29 @@ export async function fetchAdvancedAnalysis(
     return result as NiumaApiResponse;
   } catch (error: any) {
     clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error('请求牛马AI引擎超时');
+    
+    // 外部引擎不可用，回退到本地Mock服务
+    console.warn(`外部牛马AI引擎不可用: ${error.message}，回退到本地Mock服务`);
+    
+    try {
+      const mockResponse = await fetch(localMockUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      
+      if (!mockResponse.ok) {
+        throw new Error(`本地Mock服务返回错误: ${mockResponse.status}`);
+      }
+      
+      const result = await mockResponse.json();
+      return result as NiumaApiResponse;
+    } catch (mockError: any) {
+      throw new Error(`外部引擎和本地Mock服务均不可用: ${mockError.message}`);
     }
-    throw new Error(`连接牛马AI引擎失败: ${error.message}`);
   }
 }
 
@@ -147,7 +210,8 @@ export async function searchEnterprises(keyword: string, page = 1, pageSize = 20
   queryParams.append('page', String(page));
   queryParams.append('page_size', String(pageSize));
 
-  const url = `${connectionConfig.baseUrl}/api/enterprise/search?${queryParams.toString()}`;
+  const baseUrl = normalizeBaseUrl(connectionConfig.baseUrl);
+  const url = `${baseUrl}/api/enterprise/search?${queryParams.toString()}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), connectionConfig.timeout);
@@ -187,7 +251,8 @@ export async function fetchAnalysisFields(): Promise<any> {
     throw new Error('牛马AI引擎连接已禁用');
   }
 
-  const url = `${connectionConfig.baseUrl}/api/analysis/fields`;
+  const baseUrl = normalizeBaseUrl(connectionConfig.baseUrl);
+  const url = `${baseUrl}/api/analysis/fields`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), connectionConfig.timeout);

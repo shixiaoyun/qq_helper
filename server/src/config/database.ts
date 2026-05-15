@@ -527,7 +527,7 @@ export function initDatabase(): void {
     console.log('✅ Dashscope set as default provider');
   }
 
-  const deepseekApiKey = process.env.DEEPSEEK_API_KEY || 'sk-93fa56869ffe4565badaf9562aed1550';
+  const deepseekApiKey = process.env.DEEPSEEK_API_KEY || '';
   const deepseekExists = db.prepare('SELECT id FROM ai_providers WHERE provider = ?').get('deepseek');
   if (!deepseekExists) {
     db.prepare(

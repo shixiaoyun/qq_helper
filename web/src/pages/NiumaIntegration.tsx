@@ -36,8 +36,10 @@ export default function NiumaIntegrationPage() {
   }
 
   const fetchApi = useCallback(async (url: string, options?: RequestInit) => {
+    // 确保 URL 以 /api 开头
+    const apiUrl = url.startsWith('/api') ? url : `/api${url}`
     const res = await api.request({
-      url,
+      url: apiUrl,
       method: (options?.method as any) || 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -770,6 +772,13 @@ function getCardIcon(iconName: string) {
 // ==========================================
 // 批量分析面板 - 直接调用牛马引擎API
 // ==========================================
+
+// 兜底：万一后端 flattenNiumaResult 没覆盖到，这里再剥一层 {value, source}
+const val = (v: any): any => {
+  if (v && typeof v === 'object' && !Array.isArray(v) && 'value' in v) return v.value
+  return v
+}
+
 function BatchAnalysisPanel({ fetchApi, showToast }: any) {
   const [manualInput, setManualInput] = useState('')
   const [companyNames, setCompanyNames] = useState<string[]>([])
@@ -777,6 +786,7 @@ function BatchAnalysisPanel({ fetchApi, showToast }: any) {
   const [progress, setProgress] = useState(0)
   const [results, setResults] = useState<any[]>([])
   const [inputMode, setInputMode] = useState<'manual' | 'file'>('manual')
+  const [error, setError] = useState<string | null>(null)
 
   const parseCompanyNames = (input: string): string[] => {
     if (!input.trim()) return []
@@ -827,20 +837,41 @@ function BatchAnalysisPanel({ fetchApi, showToast }: any) {
       return
     }
     setAnalyzing(true)
-    setProgress(0)
+    setProgress(10)
     setResults([])
+    setError(null)
+    
     try {
+      // 模拟进度更新
+      const progressInterval = setInterval(() => {
+        setProgress((p) => (p < 90 ? p + Math.random() * 20 : p))
+      }, 500)
+
       const res = await fetchApi('/niuma/analysis/batch', {
         method: 'POST',
         body: JSON.stringify({ names: companyNames, vendor: 'autodesk' }),
       })
-      setResults(res.data.results || [])
-      setProgress(100)
-      showToast('success', `分析完成，成功 ${res.data.found}/${res.data.total}`)
+
+      clearInterval(progressInterval)
+      
+      if (res.data && res.data.results) {
+        setResults(res.data.results)
+        setProgress(100)
+        showToast('success', `分析完成，成功 ${res.data.found}/${res.data.total}`)
+      } else {
+        const errorMsg = '返回数据格式异常'
+        setError(errorMsg)
+        showToast('error', errorMsg)
+        console.error('API返回数据异常:', res)
+      }
     } catch (err: any) {
-      showToast('error', err.message)
+      const errorMsg = err.message || '分析失败，请重试'
+      setError(errorMsg)
+      showToast('error', errorMsg)
+      console.error('分析错误:', err)
+    } finally {
+      setAnalyzing(false)
     }
-    setAnalyzing(false)
   }
 
   const exportResults = () => {
@@ -848,7 +879,7 @@ function BatchAnalysisPanel({ fetchApi, showToast }: any) {
       '企业名称,信用代码,省份,城市,行业,盗版指数,质量评分,客户评分,参保人数,匹配产品,状态',
       ...results.map((r: any) => {
         const d = r.data || {}
-        return `${d.company_name || r._name},${d.credit_code || ''},${d.province || ''},${d.city || ''},${d.gb_industry_major || ''},${d.v9_piracy || ''},${d.v9_quality_score || ''},${d.v9_customer_score || ''},${d.insurance_count || ''},"${d.v9_products || ''}",${r._found ? '成功' : '失败'}`
+        return `${val(d.company_name) || r._name},${val(d.credit_code) || ''},${val(d.province) || ''},${val(d.city) || ''},${val(d.gb_industry_major) || ''},${val(d.v9_piracy) ?? ''},${val(d.v9_quality_score) ?? ''},${val(d.v9_customer_score) ?? ''},${val(d.insurance_count) ?? ''},"${val(d.v9_products) || ''}",${r._found ? '成功' : '失败'}`
       })
     ].join('\n')
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
@@ -936,7 +967,7 @@ function BatchAnalysisPanel({ fetchApi, showToast }: any) {
             {analyzing ? `分析中 ${progress}%` : '开始批量分析'}
           </button>
           <button
-            onClick={() => { setManualInput(''); setCompanyNames([]); setResults([]); setProgress(0) }}
+            onClick={() => { setManualInput(''); setCompanyNames([]); setResults([]); setProgress(0); setError(null) }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl btn-ghost text-sm"
           >
             <Trash2 className="w-4 h-4" />
@@ -955,6 +986,34 @@ function BatchAnalysisPanel({ fetchApi, showToast }: any) {
       </div>
 
       {/* 分析结果 */}
+      {analyzing && (
+        <div className="glass-card rounded-2xl p-6">
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="w-12 h-12 animate-spin gradient-text mb-4" />
+            <p className="text-base font-medium mb-2">分析中...</p>
+            <p className="text-sm text-muted-foreground mb-6">正在分析 {companyNames.length} 个企业</p>
+            <div className="w-full max-w-xs">
+              <div className="w-full h-2 rounded-full bg-secondary overflow-hidden mb-2">
+                <div className="h-full rounded-full gradient-primary transition-all" style={{ width: `${progress}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground text-center">{Math.min(Math.round(progress), 99)}%</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {error && !analyzing && (
+        <div className="glass-card rounded-2xl p-6 border border-red-500/20">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-medium text-red-500 mb-1">分析失败</h3>
+              <p className="text-sm text-muted-foreground">{error}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {results.length > 0 && (
         <div className="glass-card rounded-2xl p-6">
           <div className="flex items-center justify-between mb-4">
@@ -990,22 +1049,25 @@ function BatchAnalysisPanel({ fetchApi, showToast }: any) {
               <tbody>
                 {results.map((r: any, i: number) => {
                   const d = r.data || {}
+                  const piracy = val(d.v9_piracy)
+                  const quality = val(d.v9_quality_score)
+                  const customer = val(d.v9_customer_score)
                   return (
                     <tr key={i} className="border-b border-border/30 hover:bg-accent/30">
-                      <td className="py-2 px-3 font-medium">{d.company_name || r._name}</td>
-                      <td className="py-2 px-3">{d.province || '-'}</td>
-                      <td className="py-2 px-3">{d.gb_industry_major || '-'}</td>
+                      <td className="py-2 px-3 font-medium">{val(d.company_name) || r._name}</td>
+                      <td className="py-2 px-3">{val(d.province) || '-'}</td>
+                      <td className="py-2 px-3">{val(d.gb_industry_major) || '-'}</td>
                       <td className="py-2 px-3">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                          (d.v9_piracy || 0) >= 80 ? 'bg-red-500/10 text-red-500' :
-                          (d.v9_piracy || 0) >= 50 ? 'bg-orange-500/10 text-orange-500' :
+                          (Number(piracy) || 0) >= 80 ? 'bg-red-500/10 text-red-500' :
+                          (Number(piracy) || 0) >= 50 ? 'bg-orange-500/10 text-orange-500' :
                           'bg-green-500/10 text-green-500'
                         }`}>
-                          {d.v9_piracy ?? '-'}
+                          {piracy ?? '-'}
                         </span>
                       </td>
-                      <td className="py-2 px-3">{d.v9_quality_score ?? '-'}</td>
-                      <td className="py-2 px-3">{d.v9_customer_score ?? '-'}</td>
+                      <td className="py-2 px-3">{quality ?? '-'}</td>
+                      <td className="py-2 px-3">{customer ?? '-'}</td>
                       <td className="py-2 px-3">
                         {r._found ? (
                           <span className="flex items-center gap-1 text-green-500 text-xs">
@@ -1634,8 +1696,10 @@ function ConfigPanel({ fetchApi, showToast }: any) {
               type="text"
               value={config.baseUrl}
               onChange={(e) => setConfig({ ...config, baseUrl: e.target.value })}
+              placeholder="例如: http://localhost:1077"
               className="w-full px-3 py-2 rounded-xl bg-background border border-border/50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
+            <p className="text-[11px] text-muted-foreground">只需填写主机地址，不要重复添加 /api 前缀，系统会自动处理。</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">超时时间 (毫秒)</label>
