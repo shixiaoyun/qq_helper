@@ -1,0 +1,31 @@
+[db.exec] failed SQL:
+ CREATE TABLE IF NOT EXISTS daily_chat_limits (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      user_id INTEGER NOT NULL,
+      `chat_date` VARCHAR(255) NOT NULL,
+      chat_count INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, chat_date),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) 
+ Handshake inactivity timeout
+D:\code\qq_helper\node_modules\sync-rpc\lib\index.js:165
+    const error = new Error(msg.v.message);
+                  ^
+
+Error: Handshake inactivity timeout
+    at extractValue (D:\code\qq_helper\node_modules\sync-rpc\lib\index.js:165:19)
+    at Connection._client (D:\code\qq_helper\node_modules\sync-rpc\lib\index.js:175:12)
+    at Connection.query (D:\code\qq_helper\node_modules\sync-mysql\lib\index.js:68:19)
+    at MySQLDatabaseAdapter.query (D:\code\qq_helper\server\src\config\database.ts:131:76)
+    at MySQLDatabaseAdapter.exec (D:\code\qq_helper\server\src\config\database.ts:187:19)
+    at initDatabase (D:\code\qq_helper\server\src\config\database.ts:373:6)
+    at tokenLimitsRoutes (D:\code\qq_helper\server\src\index.ts:42:1)
+    at Object.<anonymous> (D:\code\qq_helper\server\src\index.ts:210:2)
+    at Module._compile (node:internal/modules/cjs/loader:1829:14)
+    at Object.transformer (D:\code\qq_helper\node_modules\tsx\dist\register-D46fvsV_.cjs:3:1104) {
+  code: 'PROTOCOL_SEQUENCE_TIMEOUT'
+}
+
+Node.js v25.9.0

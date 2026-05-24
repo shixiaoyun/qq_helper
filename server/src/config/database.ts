@@ -1,18 +1,227 @@
-import Database from 'better-sqlite3';
-import path from 'path';
 import bcrypt from 'bcryptjs';
 import { encrypt, decryptWithFallback, isEncryptedFormat, getCurrentKeyFingerprint } from '../services/dataEncryption.js';
+// @ts-ignore - sync-mysql has no published types
+import SyncMySQL from 'sync-mysql';
 
-const DB_PATH = path.resolve(process.cwd(), 'database/app.db');
+// Columns that may hold long/JSON text — keep TEXT in MySQL; anything else becomes VARCHAR(255).
+const MYSQL_TEXT_EXCEPTIONS = new Set([
+  'content', 'description', 'prompt', 'tool_calls', 'tool_results',
+  'documentation', 'backstory', 'error_message', 'request_payload',
+  'response_payload', 'inputs', 'outputs', 'notes', 'address',
+  'attachments', 'metadata', 'results', 'tools', 'remarks',
+  'comment', 'comments', 'data', 'embedding', 'details', 'permissions',
+  'models', 'value', 'raw_data', 'sync_filters', 'import_filters',
+  'next_action', 'result_notes', 'activity_detail', 'niuma_metadata',
+  'config', 'message', 'reason', 'task', 'result', 'error', 'goal',
+  'system_prompt', 'product_interest', 'knowledge_refs', 'next_actions',
+  'risk_factors', 'recurrence_rule', 'nodes', 'edges', 'lost_reason',
+]);
 
-let dbInstance: Database.Database | null = null;
+function normalizeMySqlCreateTableText(sql: string): string {
+  // MySQL: TEXT columns cannot have DEFAULT values; TEXT with DEFAULT CURRENT_TIMESTAMP is really a datetime.
+  // Also backtick the column name so MySQL-reserved words (key, order, status, etc.) work.
+  return sql.replace(/(\s+)`?([A-Za-z_][A-Za-z0-9_]*)`?\s+TEXT\b([^,\n)]*)/gi, (_match, padding, column, rest) => {
+    const lowerColumn = column.toLowerCase();
+    if (/DEFAULT\s+CURRENT_TIMESTAMP/i.test(rest)) {
+      return `${padding}\`${column}\` DATETIME${rest}`;
+    }
+    if (MYSQL_TEXT_EXCEPTIONS.has(lowerColumn)) {
+      const cleaned = rest.replace(/\s+DEFAULT\s+(?:'[^']*'|"[^"]*"|[^\s,)]+)/i, '');
+      return `${padding}\`${column}\` TEXT${cleaned}`;
+    }
+    return `${padding}\`${column}\` VARCHAR(255)${rest}`;
+  });
+}
 
-export function getDatabase(): Database.Database {
+function normalizeSqlForMySQL(sql: string): string {
+  let normalized = sql;
+
+  normalized = normalized.replace(/INSERT OR IGNORE INTO/gi, 'INSERT IGNORE INTO');
+  normalized = normalized.replace(/INSERT OR REPLACE INTO/gi, 'REPLACE INTO');
+  normalized = normalized.replace(/ON CONFLICT\(([^)]+)\)\s+DO UPDATE SET/gi, 'ON DUPLICATE KEY UPDATE');
+  normalized = normalized.replace(/datetime\('now'\)/gi, 'NOW()');
+  normalized = normalized.replace(/datetime\('now',\s*'\+([0-9]+) days'\)/gi, 'DATE_ADD(NOW(), INTERVAL $1 DAY)');
+  normalized = normalized.replace(/datetime\(([^,]+),\s*'\+([0-9]+) days'\)/gi, 'DATE_ADD($1, INTERVAL $2 DAY)');
+  normalized = normalized.replace(/datetime\(([^)]+)\)/gi, '$1');
+  normalized = normalized.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/gi, 'INT PRIMARY KEY AUTO_INCREMENT');
+  normalized = normalized.replace(/\bAUTOINCREMENT\b/gi, 'AUTO_INCREMENT');
+  normalized = normalized.replace(/\bREAL\b/gi, 'DOUBLE');
+  normalized = normalized.replace(/\bPRAGMA\b[^;\n]*/gi, '');
+  // "order" is a reserved word in MySQL — replace ANSI quotes with backticks.
+  normalized = normalized.replace(/"([A-Za-z_][A-Za-z0-9_]*)"/g, '`$1`');
+  // MySQL has no IF NOT EXISTS for CREATE INDEX — drop it. The exec() catches duplicate-key errors.
+  normalized = normalized.replace(/CREATE\s+(UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+/gi, 'CREATE $1INDEX ');
+
+  // Backtick MySQL reserved words that are used as column names (key, order) — except where
+  // they're part of MySQL keywords (PRIMARY KEY, FOREIGN KEY, UNIQUE KEY, ON DUPLICATE KEY UPDATE, ORDER BY).
+  normalized = normalized.replace(/(?<!\b(?:primary|foreign|unique|duplicate)\s+)(?<![`\w])key(?![`\w])(?!\s+update\b)/gi, '`key`');
+  normalized = normalized.replace(/(?<![`\w])order(?![`\w])(?!\s+by\b)/gi, '`order`');
+
+  if (/CREATE TABLE/i.test(normalized)) {
+    normalized = normalizeMySqlCreateTableText(normalized);
+  }
+
+  return normalized.trim();
+}
+
+function parseDatabaseUrl(urlString: string) {
+  const url = new URL(urlString);
+  return {
+    host: url.hostname,
+    port: Number(url.port || 3306),
+    user: url.username,
+    password: url.password,
+    database: url.pathname.replace(/^\//, ''),
+  };
+}
+
+class MySQLPreparedStatement {
+  private adapter: any; // MySQLDatabaseAdapter — uses .runQuery() which handles reconnects
+  private sql: string;
+
+  constructor(adapter: any, sql: string) {
+    this.adapter = adapter;
+    this.sql = normalizeSqlForMySQL(sql);
+  }
+
+  run(...params: any[]) {
+    const result = this.adapter.runQuery(this.sql, params);
+    return {
+      lastInsertRowid: result.insertId ?? 0,
+      changes: result.affectedRows ?? result.affected_rows ?? 0,
+    };
+  }
+
+  get(...params: any[]) {
+    const rows = this.adapter.runQuery(this.sql, params);
+    return Array.isArray(rows) ? rows[0] : rows;
+  }
+
+  all(...params: any[]) {
+    return this.adapter.runQuery(this.sql, params);
+  }
+}
+
+function buildSyncMysqlConnection(): any {
+  const databaseUrl = process.env.DATABASE_URL!;
+  const config = parseDatabaseUrl(databaseUrl);
+  return new SyncMySQL({
+    host: config.host,
+    user: config.user,
+    password: config.password,
+    database: config.database,
+    port: config.port,
+    multipleStatements: true,
+    charset: 'utf8mb4',
+  });
+}
+
+class MySQLDatabaseAdapter {
+  private connection: any;
+  private existingIndexes: Set<string> | null = null;
+
+  constructor(connection: any) {
+    this.connection = connection;
+  }
+
+  // sync-mysql's child process accumulates errors and eventually fails with "nodeNC failed"
+  // (the IPC child dies). Recreate the connection when that happens.
+  private query(sql: string, params?: any[]): any {
+    try {
+      return params ? this.connection.query(sql, params) : this.connection.query(sql);
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (/nodeNC failed|ECONNREFUSED/i.test(msg)) {
+        try { this.connection.dispose?.(); } catch { /* ignore */ }
+        this.connection = buildSyncMysqlConnection();
+        this.existingIndexes = null;
+        return params ? this.connection.query(sql, params) : this.connection.query(sql);
+      }
+      throw e;
+    }
+  }
+
+  pragma(_: string) {
+    return null;
+  }
+
+  // Lazily load index names so we can pre-skip CREATE INDEX statements that would just throw
+  // Duplicate-key — sync-mysql's child process accumulates errors and eventually crashes.
+  private loadIndexCache(): Set<string> {
+    if (!this.existingIndexes) {
+      try {
+        const rows = this.query(
+          'SELECT TABLE_NAME, INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE()'
+        );
+        this.existingIndexes = new Set(
+          (rows as any[]).map(r => `${r.TABLE_NAME}.${r.INDEX_NAME}`.toLowerCase())
+        );
+      } catch {
+        this.existingIndexes = new Set();
+      }
+    }
+    return this.existingIndexes;
+  }
+
+  exec(sql: string) {
+    const normalized = normalizeSqlForMySQL(sql);
+    if (!normalized) {
+      return null;
+    }
+
+    // Short-circuit CREATE INDEX on existing indexes — avoid sync-mysql child instability.
+    const idxMatch = /^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\s+ON\s+`?([A-Za-z_][A-Za-z0-9_]*)`?/i.exec(normalized);
+    if (idxMatch) {
+      const key = `${idxMatch[2]}.${idxMatch[1]}`.toLowerCase();
+      const cache = this.loadIndexCache();
+      if (cache.has(key)) {
+        return null;
+      }
+      cache.add(key);
+    }
+
+    if (process.env.DB_TRACE === '1') {
+      console.log('[db.exec]', normalized.slice(0, 120).replace(/\s+/g, ' '));
+    }
+    try {
+      return this.query(normalized);
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (idxMatch && /Duplicate key name|already exists/i.test(msg)) {
+        return null;
+      }
+      // ALTER TABLE ADD COLUMN failures on existing columns are expected — caller wraps in try/catch.
+      const isAlterAddCol = /^\s*ALTER\s+TABLE\b.*\bADD\s+COLUMN\b/i.test(normalized);
+      if (isAlterAddCol && /Duplicate column name/i.test(msg)) {
+        throw e;
+      }
+      console.error('[db.exec] failed SQL:\n', normalized, '\n', msg);
+      throw e;
+    }
+  }
+
+  prepare(sql: string) {
+    return new MySQLPreparedStatement(this, sql);
+  }
+
+  // Used by MySQLPreparedStatement to share the adapter's reconnect logic.
+  runQuery(sql: string, params?: any[]): any {
+    return this.query(sql, params);
+  }
+}
+
+let dbInstance: any = null;
+
+function getMySQLDatabase(): any {
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required (mysql://user:pass@host:port/db)');
+  }
+  return new MySQLDatabaseAdapter(buildSyncMysqlConnection());
+}
+
+export function getDatabase(): any {
   if (!dbInstance) {
-    dbInstance = new Database(DB_PATH);
-    dbInstance.pragma('journal_mode = WAL');
-    // 设置UTF-8编码以支持中文
-    dbInstance.pragma('encoding = "UTF-8"');
+    dbInstance = getMySQLDatabase();
   }
   return dbInstance;
 }
@@ -1268,5 +1477,5 @@ export function initDatabase(): void {
     )
   `);
 
-  console.log('✅ Database initialized (better-sqlite3)');
+  console.log('✅ Database initialized (mysql)');
 }

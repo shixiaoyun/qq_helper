@@ -1,7 +1,8 @@
 import { PrismaClient } from '@prisma/client';
-import path from 'path';
 
-const DB_PATH = path.resolve(process.cwd(), 'database/app.db');
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is required (mysql://user:pass@host:port/db)');
+}
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -10,7 +11,7 @@ const globalForPrisma = globalThis as unknown as {
 export const prisma = globalForPrisma.prisma ?? new PrismaClient({
   datasources: {
     db: {
-      url: `file:${DB_PATH}`,
+      url: process.env.DATABASE_URL,
     },
   },
   log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],

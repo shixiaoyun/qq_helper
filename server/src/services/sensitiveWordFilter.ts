@@ -1,7 +1,6 @@
 import { getDatabase } from '../config/database.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import type Database from 'better-sqlite3';
 
 export interface FilterResult {
   filtered: string;
@@ -102,7 +101,7 @@ class Trie {
 }
 
 class SensitiveWordFilter {
-  private db: Database.Database;
+  private db: any;
   private trie: Trie;
   private wordMap: Map<string, string>;
   private defaultWords: SensitiveWordEntry[];

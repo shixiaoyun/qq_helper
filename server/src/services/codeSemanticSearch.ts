@@ -1,6 +1,6 @@
 import { readFile } from 'fs/promises';
 import { join, extname } from 'path';
-import Database from 'better-sqlite3';
+import { getDatabase } from '../config/database.js';
 import { glob } from 'glob';
 
 // ============ 类型定义 ============
@@ -527,15 +527,11 @@ class InvertedIndex {
 
 // ============ SQLite 持久化 ============
 
-const DB_PATH = join(process.cwd(), 'database', 'code_search.db');
-
-function getSearchDB(): Database.Database {
-  const db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  return db;
+function getSearchDB() {
+  return getDatabase();
 }
 
-function initSearchDatabase(db: Database.Database) {
+function initSearchDatabase(db: any) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS code_symbols (
       id TEXT PRIMARY KEY,
@@ -572,7 +568,7 @@ function initSearchDatabase(db: Database.Database) {
 class CodeSemanticSearchService {
   private symbols = new Map<string, CodeSymbol>();
   private invertedIndex = new InvertedIndex();
-  private db: Database.Database | null = null;
+  private db: any | null = null;
   private stats: IndexStats = { totalFiles: 0, totalSymbols: 0, languages: {} };
   private indexing = false;
 

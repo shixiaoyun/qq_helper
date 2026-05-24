@@ -685,7 +685,7 @@ function registerDbTools() {
     execute: async () => {
       try {
         const result = await (prisma as any).$queryRawUnsafe(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+          'SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()'
         );
         const tables = Array.isArray(result) ? result : [];
         return { success: true, tables: tables.map((t: any) => t.name) };
@@ -707,17 +707,22 @@ function registerDbTools() {
     },
     execute: async ({ tableName }) => {
       try {
-        const result = await (prisma as any).$queryRawUnsafe(`PRAGMA table_info(${tableName})`);
+        const result = await (prisma as any).$queryRawUnsafe(
+          `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY
+           FROM information_schema.COLUMNS
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${String(tableName).replace(/'/g, "''")}'
+           ORDER BY ORDINAL_POSITION`
+        );
         const columns = Array.isArray(result) ? result : [];
         return {
           success: true,
           table: tableName,
           columns: columns.map((c: any) => ({
-            name: c.name,
-            type: c.type,
-            nullable: c.notnull === 0,
-            default: c.dflt_value,
-            primaryKey: c.pk === 1,
+            name: c.COLUMN_NAME,
+            type: c.DATA_TYPE,
+            nullable: c.IS_NULLABLE === 'YES',
+            default: c.COLUMN_DEFAULT,
+            primaryKey: c.COLUMN_KEY === 'PRI',
           })),
         };
       } catch (err: any) {

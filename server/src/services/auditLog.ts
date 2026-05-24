@@ -1,5 +1,4 @@
 import { getDatabase } from '../config/database.js';
-import type Database from 'better-sqlite3';
 
 export enum AuditAction {
   // auth
@@ -53,7 +52,7 @@ export interface AuditQueryOptions {
 }
 
 class AuditLogService {
-  private db: Database.Database;
+  private db: any;
 
   constructor() {
     this.db = getDatabase();

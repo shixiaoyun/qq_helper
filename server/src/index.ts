@@ -38,12 +38,13 @@ import tokenLimitsRoutes from './routes/tokenLimits.js';
 
 const app = express();
 
-// 初始化数据库连接
+// 初始化数据库 schema 与种子数据（MySQL，幂等）
 initDatabase();
+
 prisma.$connect().then(() => {
-  console.log('�?Database connected via Prisma');
+  console.log('✅ Database connected via Prisma');
 }).catch((err: Error) => {
-  console.error('�?Database connection failed:', err.message);
+  console.error('❌ Database connection failed:', err.message);
 });
 
 // 初始化Redis连接 (非阻�?
