@@ -1196,25 +1196,110 @@ router.post('/crm/follow-ups', authMiddleware, (req, res) => {
 // ==========================================
 
 // 获取设置
+// 前端 camelCase ↔ DB key 映射
+const SETTING_KEY_MAP: Record<string, { dbKey: string; type: 'bool' | 'int' | 'string' }> = {
+  enabled:              { dbKey: 'crm_enabled',                 type: 'bool' },
+  aiSyncEnabled:        { dbKey: 'auto_sync_niuma',             type: 'bool' },
+  aiSyncInterval:       { dbKey: 'sync_interval_minutes',       type: 'int'  },
+  yikeEnabled:          { dbKey: 'ecrm_integration_enabled',    type: 'bool' },
+  yikeUrl:              { dbKey: 'ecrm_base_url',               type: 'string' },
+  yikeApiKey:           { dbKey: 'ecrm_api_key',                type: 'string' },
+  defaultReminderTime:  { dbKey: 'follow_up_reminder_default',  type: 'int'  },
+  reminderUnit:         { dbKey: 'follow_up_reminder_unit',     type: 'string' },
+};
+
+function parseSettingValue(raw: string, type: 'bool' | 'int' | 'string'): any {
+  if (type === 'bool') return raw === '1' || raw === 'true';
+  if (type === 'int') return Number(raw) || 0;
+  return raw;
+}
+
+function serializeSettingValue(val: any, type: 'bool' | 'int' | 'string'): string {
+  if (type === 'bool') return val ? '1' : '0';
+  if (type === 'int') return String(Number(val) || 0);
+  return String(val ?? '');
+}
+
 router.get('/crm/settings', authMiddleware, (_req, res) => {
   try {
     const db = getDatabase();
-    const settings = db.prepare('SELECT * FROM crm_settings').all();
-    res.json({ success: true, data: settings });
+    const rows = db.prepare('SELECT `key`, value FROM crm_settings').all() as Array<{ key: string; value: string }>;
+    const byKey = new Map(rows.map(r => [r.key, r.value]));
+
+    // 用前端友好的 camelCase 形状返回；缺省值由路由层兜底
+    const data: Record<string, any> = {};
+    for (const [feKey, meta] of Object.entries(SETTING_KEY_MAP)) {
+      const raw = byKey.get(meta.dbKey);
+      if (raw !== undefined) data[feKey] = parseSettingValue(raw, meta.type);
+    }
+    res.json({ success: true, data });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// 更新设置
+// 批量更新 — 前端按整对象保存（CRMSettings.tsx 的 handleSave）
+router.put('/crm/settings', authMiddleware, (req, res) => {
+  try {
+    const db = getDatabase();
+    const incoming = req.body || {};
+
+    // 用 check + INSERT/UPDATE 两段式，避免 ON CONFLICT/ON DUPLICATE 在 MySQL 里
+    // 与 reserved word `value` 列叠加时的诡异 NULL 绑定问题（实测 ER_BAD_NULL_ERROR）
+    const checkStmt = db.prepare('SELECT id FROM crm_settings WHERE `key` = ?');
+    const updateStmt = db.prepare('UPDATE crm_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE `key` = ?');
+    const insertStmt = db.prepare('INSERT INTO crm_settings (`key`, value, description) VALUES (?, ?, ?)');
+
+    let updated = 0;
+    for (const [feKey, val] of Object.entries(incoming)) {
+      const meta = SETTING_KEY_MAP[feKey];
+      if (!meta) continue;  // 忽略未识别字段，避免脏数据写库
+      const serialized = serializeSettingValue(val, meta.type);
+      const exists = checkStmt.get(meta.dbKey);
+      if (exists) {
+        updateStmt.run(serialized, meta.dbKey);
+      } else {
+        insertStmt.run(meta.dbKey, serialized, '');
+      }
+      updated++;
+    }
+    res.json({ success: true, updated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 按 key 更新 — 保留作向后兼容（一些脚本或调试场景可能直接调用）
 router.put('/crm/settings/:key', authMiddleware, (req, res) => {
   try {
     const db = getDatabase();
     const { value } = req.body;
-    db.prepare('UPDATE crm_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?').run(value, req.params.key);
+    db.prepare('UPDATE crm_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE `key` = ?').run(value, req.params.key);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 测试易客CRM连接 — 简单 ping，超时 8s
+router.post('/crm/settings/test-yike', authMiddleware, async (req, res) => {
+  const { url, apiKey } = req.body || {};
+  if (!url || typeof url !== 'string') {
+    res.status(400).json({ success: false, error: 'url 必填' });
+    return;
+  }
+  try {
+    const target = url.replace(/\/+$/g, '');
+    const start = Date.now();
+    const resp = await fetch(target, {
+      method: 'GET',
+      headers: apiKey ? { 'Authorization': `Bearer ${apiKey}`, 'X-API-Key': apiKey } : {},
+      signal: AbortSignal.timeout(8000),
+    });
+    const latency = Date.now() - start;
+    res.json({ success: resp.ok, data: { status: resp.status, latency } });
+  } catch (err: any) {
+    res.status(502).json({ success: false, error: `连接失败: ${err.message}` });
   }
 });
 

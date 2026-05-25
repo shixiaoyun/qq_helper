@@ -10,6 +10,7 @@ import { initDatabase } from './config/database.js';
 import { initMCPTools } from './services/mcpTools.js';
 import { initMCPToolsModular } from './mcp-tools/index.js';
 import { startBackgroundIndexer } from './services/codeSemanticSearch.js';
+import { startNiumaAutoSyncScheduler } from './services/niumaAutoSyncScheduler.js';
 
 import authRoutes from './routes/auth.js';
 import chatRoutes from './routes/chat.js';
@@ -64,10 +65,18 @@ initMCPToolsModular().catch(err => {
   console.warn('⚠️ Modular MCP tools init failed:', err.message);
 });
 
-// 启动代码语义搜索后台索引
-startBackgroundIndexer().catch(err => {
-  console.warn('⚠️ Code semantic search indexer failed:', err.message);
-});
+// 启动代码语义搜索后台索引（默认关闭——sync-mysql 会阻塞事件循环数分钟）
+// 需要时在 .env 设 CODE_SEARCH_AUTO_INDEX=1，或通过 API/MCP 手动触发
+if (process.env.CODE_SEARCH_AUTO_INDEX === '1') {
+  startBackgroundIndexer().catch(err => {
+    console.warn('⚠️ Code semantic search indexer failed:', err.message);
+  });
+} else {
+  console.log('ℹ️  CodeSearch 后台索引已禁用 (设 CODE_SEARCH_AUTO_INDEX=1 启用)');
+}
+
+// 牛马引擎自动同步调度器（按 niuma_sync_strategy 配置定时拉取并导入 CRM）
+startNiumaAutoSyncScheduler();
 
 // 安全中间件
 app.use(helmet());

@@ -281,12 +281,16 @@ export async function fetchAnalysisFields(): Promise<any> {
 
 /**
  * 健康检查
+ * 1077 上 /api/analysis/fields 已下线；用 /api/analysis/advanced?page_size=1 作为存活探针
+ * （该端点稳定返回 JSON，即使空结果或参数报错也会回 200 + error 字段，能区分"服务在"与"服务死"）
  */
 export async function checkNiumaEngineHealth(): Promise<{ ok: boolean; latency: number; error?: string }> {
   const start = Date.now();
+  const baseUrl = normalizeBaseUrl(connectionConfig.baseUrl);
   try {
-    const response = await fetch(`${connectionConfig.baseUrl}/api/analysis/fields`, {
+    const response = await fetch(`${baseUrl}/api/analysis/advanced?page_size=1`, {
       method: 'GET',
+      headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(5000),
     });
     const latency = Date.now() - start;

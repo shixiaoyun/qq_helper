@@ -551,11 +551,15 @@ function initSearchDatabase(db: any) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS search_index (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      index_data TEXT NOT NULL,
-      stats TEXT,
+      index_data LONGTEXT NOT NULL,
+      stats LONGTEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // 已有旧表(VARCHAR/TEXT)迁移到 LONGTEXT — 倒排索引序列化后可达数MB
+  try { db.exec(`ALTER TABLE search_index MODIFY index_data LONGTEXT NOT NULL`); } catch { /* ignore */ }
+  try { db.exec(`ALTER TABLE search_index MODIFY stats LONGTEXT`); } catch { /* ignore */ }
 
   db.exec(`CREATE INDEX IF NOT EXISTS idx_symbols_file ON code_symbols(file_path)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_symbols_name ON code_symbols(name)`);

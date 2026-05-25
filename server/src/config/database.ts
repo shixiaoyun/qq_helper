@@ -39,10 +39,20 @@ function normalizeSqlForMySQL(sql: string): string {
   normalized = normalized.replace(/INSERT OR IGNORE INTO/gi, 'INSERT IGNORE INTO');
   normalized = normalized.replace(/INSERT OR REPLACE INTO/gi, 'REPLACE INTO');
   normalized = normalized.replace(/ON CONFLICT\(([^)]+)\)\s+DO UPDATE SET/gi, 'ON DUPLICATE KEY UPDATE');
+  // SQLite datetime() → MySQL — 顺序敏感：先处理带 modifier 的，再处理纯 'now'，最后剥裸 datetime()
+  normalized = normalized.replace(/datetime\('now',\s*'([+-])([0-9]+)\s+days?'\)/gi,
+    (_m, sign, n) => `DATE_${sign === '+' ? 'ADD' : 'SUB'}(NOW(), INTERVAL ${n} DAY)`);
+  normalized = normalized.replace(/datetime\(([^,]+),\s*'([+-])([0-9]+)\s+days?'\)/gi,
+    (_m, expr, sign, n) => `DATE_${sign === '+' ? 'ADD' : 'SUB'}(${expr}, INTERVAL ${n} DAY)`);
   normalized = normalized.replace(/datetime\('now'\)/gi, 'NOW()');
-  normalized = normalized.replace(/datetime\('now',\s*'\+([0-9]+) days'\)/gi, 'DATE_ADD(NOW(), INTERVAL $1 DAY)');
-  normalized = normalized.replace(/datetime\(([^,]+),\s*'\+([0-9]+) days'\)/gi, 'DATE_ADD($1, INTERVAL $2 DAY)');
   normalized = normalized.replace(/datetime\(([^)]+)\)/gi, '$1');
+
+  // SQLite date() → MySQL — 'now' 走 CURDATE()，date(col) 走 MySQL 原生 DATE()，date('now', '±N days') 走 DATE_ADD/SUB
+  normalized = normalized.replace(/\bdate\('now',\s*'([+-])([0-9]+)\s+days?'\)/gi,
+    (_m, sign, n) => `DATE_${sign === '+' ? 'ADD' : 'SUB'}(CURDATE(), INTERVAL ${n} DAY)`);
+  normalized = normalized.replace(/\bdate\(([^,]+),\s*'([+-])([0-9]+)\s+days?'\)/gi,
+    (_m, expr, sign, n) => `DATE_${sign === '+' ? 'ADD' : 'SUB'}(${expr}, INTERVAL ${n} DAY)`);
+  normalized = normalized.replace(/\bdate\('now'\)/gi, 'CURDATE()');
   normalized = normalized.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/gi, 'INT PRIMARY KEY AUTO_INCREMENT');
   normalized = normalized.replace(/\bAUTOINCREMENT\b/gi, 'AUTO_INCREMENT');
   normalized = normalized.replace(/\bREAL\b/gi, 'DOUBLE');
